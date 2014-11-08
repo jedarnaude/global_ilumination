@@ -1,0 +1,424 @@
+<!doctype html>
+<html>
+	<head>
+		<title>Render test</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+
+		<script src="js/three.js"></script>
+		<script src="js/Detector.js"></script>
+		<script src="js/Stats.js"></script>
+		<script src="js/dat.gui.min.js"></script>
+
+		<script src="js/threex/THREEx.WindowResize.js"></script>
+		<script src="js/OrbitControls.js"></script>
+
+		<script src="js/CopyShader.js"></script>
+		<script src="js/SSAOShader.js"></script>
+		<script src="js/BokehShader.js"></script>
+		
+		<script src="js/EffectComposer.js"></script>
+		<script src="js/RenderPass.js"></script>
+		<script src="js/MaskPass.js"></script>
+		<script src="js/ShaderPass.js"></script>
+		<script src="js/BokehPass.js"></script>
+
+		<link  href="css/main.css" rel="stylesheet"/>
+	</head>
+<body>
+    <div id="container"></div>
+	
+	<script type="x-shader/x-vertex" id="vertexShader">
+
+		varying vec3 vViewPosition;
+		varying vec3 vNormal;
+
+		void main() {
+
+			vec4 mvPosition = modelViewMatrix * vec4( position, 1.0 );
+			vViewPosition = -mvPosition.xyz;
+			vNormal = normal;
+
+			gl_Position = projectionMatrix * mvPosition;
+
+		}
+
+	</script>
+
+	<script type="x-shader/x-fragment" id="fragmentShader">
+
+		precision mediump float;
+
+		uniform samplerCube tCube;
+
+		varying vec3 vViewPosition;
+		varying vec3 vNormal;
+
+		void main() {
+
+			vec3 normal = normalize( vNormal );
+
+			vec3 diffuse1 = textureCube( tCube, normal ).xyz;
+
+			gl_FragColor = vec4( diffuse1, 1.0 );
+
+		}
+
+	</script>
+
+	<script type="text/javascript">
+		var stats, scene, renderer, composer;
+		var camera, controls;
+		var lightdir;
+		var ctxHeightmap;
+		var ctxColormap;
+		var postprocessing = {};
+
+		var width = window.innerWidth;
+		var height = window.innerHeight;
+
+		var obj;
+
+		var num_textures = 2;
+		var num_textures_loaded = 0;
+		loadTextures();
+
+		function onLoadTexture() {
+			num_textures_loaded++;
+			console.log("Load texture: " + num_textures_loaded + "/" + num_textures);
+			if (num_textures_loaded == num_textures) {
+        		// done? init
+        		init();
+        		animate();				
+			}
+		}
+		function loadTextures() {
+			// heightmap
+			var imgHeightmap = new Image();
+      		imgHeightmap.onload = function() {
+				var canvas = document.createElement('canvas');
+				canvas.width = imgHeightmap.width;
+				canvas.height = imgHeightmap.height;
+				ctxHeightmap = canvas.getContext('2d');      			
+        		ctxHeightmap.drawImage(imgHeightmap, 0,0);
+        		onLoadTexture();
+      		};
+      		imgHeightmap.src = 'textures/heightmap.jpg';
+      		// colormap
+			var imgColormap = new Image();
+      		imgColormap.onload = function() {
+				var canvas = document.createElement('canvas');
+				canvas.width = imgColormap.width;
+				canvas.height = imgColormap.height;
+				ctxColormap = canvas.getContext('2d');      			
+        		ctxColormap.drawImage(imgColormap, 0,0);
+        		onLoadTexture();
+      		};
+      		imgColormap.src = 'textures/colormap.jpg';
+    	}
+
+		// init the scene
+		function init(){
+
+			renderer = new THREE.WebGLRenderer({
+				antialias : true,
+				preserveDrawingBuffer : false
+			});
+			renderer.setClearColor(0xffffffff);
+			renderer.setSize( window.innerWidth, window.innerHeight );
+			document.getElementById('container').appendChild(renderer.domElement);
+
+			var shaderSettings = {
+				rings: 3,
+				samples: 4
+			};
+
+			// stats
+			stats = new Stats();
+			stats.domElement.style.position	= 'absolute';
+			stats.domElement.style.bottom	= '0px';
+			document.body.appendChild( stats.domElement );
+
+			// scene
+			scene = new THREE.Scene();
+			scene.matrixAutoUpdate = false;
+
+			// camera
+			camera	= new THREE.PerspectiveCamera(10, window.innerWidth / window.innerHeight, 0.1, 500.0 );
+			camera.position.set(36.55888365471339, 23.83826624283816, -44.5666206579091);
+			camera.up = new THREE.Vector3(0,1,0);
+			camera.lookAt(new THREE.Vector3(8,-3,0));
+			scene.add(camera);
+
+			// camera controls
+			controls = new THREE.OrbitControls( camera );
+			controls.target.set(9.058514357835705, -7.41882130700996, -5.943775521769952)
+
+			// Renderer shadowmap
+			renderer.shadowMapEnabled = false;
+			renderer.shadowMapType = THREE.PCFSoftShadowMap;
+
+			renderer.shadowCameraNear = 1;
+			renderer.shadowCameraFar = camera.far;
+			renderer.shadowCameraFov = 50;
+			renderer.shadowMapBias = 0.0039;
+			renderer.shadowMapDarkness = 1;
+			renderer.shadowMapWidth = 1024;
+			renderer.shadowMapHeight = 1024;
+			
+			renderer.autoClear = true ;
+
+			// Lights
+			var light	= new THREE.AmbientLight( 0xffffff );
+			//scene.add( light );
+			lightdir = new THREE.DirectionalLight( 0xffffff, 1.5 );
+			lightdir.position.set(1, 1, 0).normalize();
+			lightdir.castShadow = true
+			lightdir.shadowCameraRight = 50;
+			lightdir.shadowCameraLeft = -50;
+			lightdir.shadowCameraTop = 50;
+			lightdir.shadowCameraBottom = -50;
+			scene.add( lightdir );
+
+			// Skybox cubemap
+			var r = "textures/bridge2/";
+			var urls = [ r + "px.jpg", r + "nx.jpg",
+					   	 r + "py.jpg", r + "ny.jpg",
+						 r + "pz.jpg", r + "nz.jpg" ];			
+			var textureCube = THREE.ImageUtils.loadTextureCube( urls  );
+			textureCube.format = THREE.RGBFormat;
+
+			// Skybox shader
+			var shader = THREE.ShaderLib[ "cube" ];
+			shader.uniforms[ "tCube" ].value = textureCube;
+
+			// Skybox material
+			var material = new THREE.ShaderMaterial( {
+				fragmentShader: shader.fragmentShader,
+				vertexShader: shader.vertexShader,
+				uniforms: shader.uniforms,
+				depthWrite: false,
+				side: THREE.BackSide
+			} );
+
+			// Skybox mesh
+			var mesh = new THREE.Mesh( new THREE.BoxGeometry( 1000, 1000, 1000 ), material );
+			//scene.add( mesh );						 			
+
+			// Cubes mesh
+			console.log("Creating world...");
+			var num = 60;
+			var heightMap = ctxHeightmap.getImageData(0,0, ctxHeightmap.canvas.width, ctxHeightmap.canvas.height);
+			var colorMap = ctxColormap.getImageData(0,0, ctxColormap.canvas.width, ctxColormap.canvas.height);
+			var geometry = initGeometry(heightMap, colorMap, num, 40/num, 40/num);
+			/*
+			var material = new THREE.MeshLambertMaterial( {
+				color: 0xffffff,
+				//emissive: 0x808080,
+				specular: 0xffffff,
+				envMap: textureCube,
+				combine: THREE.MultiplyOperation,
+				shininess: 25.0,
+				reflectivity: 1.4,
+				vertexColors: THREE.FaceColors,
+				shading: THREE.FlatShading,
+			});
+			*/
+			var material = new THREE.ShaderMaterial( {
+ 				uniforms: {
+        			tCube: { type: 't', value: textureCube }
+    			},
+				vertexShader: document.getElementById('vertexShader').text,
+				fragmentShader: document.getElementById('fragmentShader').text,
+			});			
+			
+			var mesh = new THREE.Mesh( geometry, material );
+			mesh.castShadow = true;
+			mesh.receiveShadow = true;
+			scene.add( mesh );
+			obj = mesh;
+
+			initComposer();
+
+			// window resizer
+			THREEx.WindowResize.bind( renderer, camera );
+
+			console.log("Done!");
+		}
+
+		function initGeometry(heightMap, colorMap, num, sep, size) {
+			var cubes = (num * 2 + 1) * (num * 2 + 1);
+			var geometry = new THREE.BufferGeometry();
+			var indices = new Uint32Array( cubes * 3 * 12 );
+
+			var positions = new Float32Array( cubes * 3 * 24 );
+			var normals = new Float32Array( cubes * 3 * 24 );
+			var colors = new Float32Array( cubes * 3 * 24 );
+
+			// vtx
+			var vtx = {};
+			for ( var i = 0; i < 8; i++ )
+				vtx[i] = new THREE.Vector3();
+			// normal
+			var npx = new THREE.Vector3(1,0,0);
+			var npy = new THREE.Vector3(0,1,0);
+			var npz = new THREE.Vector3(0,0,1);
+			var nnx = new THREE.Vector3(-1,0,0);
+			var nny = new THREE.Vector3(0,-1,0);
+			var nnz = new THREE.Vector3(0,0,-1);
+			// color
+			var color1 = new THREE.Color();
+			var color2 = new THREE.Color();
+
+			var idx = 0;
+			var ind = 0;
+			for ( var i = -num; i <= num; i++ ) {
+				for ( var j = -num; j <= num; j++ ) {
+					var texx = (heightMap.width-1.0)*(j+num)/(num*2.0);
+					var texy = (heightMap.height-1.0)*(i+num)/(num*2.0);
+          			var tex = Math.round(texy)*heightMap.width*4 + Math.round(texx)*4;
+          			var h = heightMap.data[tex] * 3 / 255.0;
+          			var r = colorMap.data[tex+0] / 255.0;
+          			var g = colorMap.data[tex+1] / 255.0;
+          			var b = colorMap.data[tex+2] / 255.0;
+          			var x = j*sep;
+          			var y = 0;
+          			var z = i*sep;
+          			function cubeSide(vv,vi, va,vb,vc,vd, normal, ca,cb,cc,cd) {
+          				// positions
+          				positions[vv+0 ] = va.x; positions[vv+1 ] = va.y; positions[vv+2 ] = va.z;
+          				positions[vv+3 ] = vb.x; positions[vv+4 ] = vb.y; positions[vv+5 ] = vb.z;
+          				positions[vv+6 ] = vc.x; positions[vv+7 ] = vc.y; positions[vv+8 ] = vc.z;
+          				positions[vv+9 ] = vd.x; positions[vv+10] = vd.y; positions[vv+11] = vd.z;
+          				// normals
+          				for ( var i = 0; i < 4; i++ ) {
+          					normals[vv+i*3+0] = normal.x;
+          					normals[vv+i*3+1] = normal.y;
+          					normals[vv+i*3+2] = normal.z;
+          				}
+          				// colors
+						colors[vv+0*3+0] = ca.r; colors[vv+0*3+1] = ca.g; colors[vv+0*3+2] = ca.b;
+						colors[vv+1*3+0] = cb.r; colors[vv+1*3+1] = cb.g; colors[vv+1*3+2] = cb.b;
+						colors[vv+2*3+0] = cc.r; colors[vv+2*3+1] = cc.g; colors[vv+2*3+2] = cc.b;
+						colors[vv+3*3+0] = cd.r; colors[vv+3*3+1] = cd.g; colors[vv+3*3+2] = cd.b;
+          				// indices
+          				var vo = vv/3.0;
+						indices[vi+0 ] = vo+0;
+						indices[vi+1 ] = vo+2;
+						indices[vi+2 ] = vo+1;
+						indices[vi+3 ] = vo+0;
+						indices[vi+4 ] = vo+3;
+						indices[vi+5 ] = vo+2;
+          			}
+          			/*
+          			  0----1
+                     /|   /|
+          			3----2 |
+          			| |	 | |
+          			| |	 | |
+          			| 4--|-5
+          			|/   |/
+          			7----6
+          			*/
+
+          			// data
+          			vtx[0].set( x - size*0.5, y+h, z - size*0.5 );
+          			vtx[1].set( x + size*0.5, y+h, z - size*0.5 );
+          			vtx[2].set( x + size*0.5, y+h, z + size*0.5 );
+          			vtx[3].set( x - size*0.5, y+h, z + size*0.5 );
+          			vtx[4].set( x - size*0.5, y, z - size*0.5 );
+          			vtx[5].set( x + size*0.5, y, z - size*0.5 );
+          			vtx[6].set( x + size*0.5, y, z + size*0.5 );
+          			vtx[7].set( x - size*0.5, y, z + size*0.5 );
+					// color
+					//var d = (heightMap.data[tex]/255.5) + 0.3;
+					var r = 1;
+					var g = 1;
+					var b = 1;
+					var d = 1.0;
+					var decay = 1.0;
+					color1.setRGB(r*d,g*d,b*d);
+					color2.setRGB(r*d*decay,g*d*decay,b*d*decay);
+					// create cube
+					cubeSide(idx+12*0, ind+6*0, vtx[0], vtx[1], vtx[2], vtx[3], npy, color1,color1,color1,color1);
+					cubeSide(idx+12*1, ind+6*1, vtx[2], vtx[1], vtx[5], vtx[6], npx, color1,color1,color2,color2);
+					cubeSide(idx+12*2, ind+6*2, vtx[7], vtx[6], vtx[5], vtx[4], nny, color2,color2,color2,color2);
+					cubeSide(idx+12*3, ind+6*3, vtx[0], vtx[3], vtx[7], vtx[4], nnx, color1,color1,color2,color2);
+					cubeSide(idx+12*4, ind+6*4, vtx[3], vtx[2], vtx[6], vtx[7], npz, color1,color1,color2,color2);
+					cubeSide(idx+12*5, ind+6*5, vtx[1], vtx[0], vtx[4], vtx[5], nnz, color1,color1,color2,color2);
+					// pointers
+					idx = idx + 3 * 24;
+					ind = ind + 3 * 12;
+				}
+			}
+			geometry.addAttribute( 'index', new THREE.BufferAttribute( indices, 1 ) );
+			geometry.addAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+			geometry.addAttribute( 'normal', new THREE.BufferAttribute( normals, 3 ) );
+			geometry.addAttribute( 'color', new THREE.BufferAttribute( colors, 3 ) );
+			geometry.computeBoundingSphere();
+
+			return geometry;
+		}
+
+		function initComposer() {
+			var renderPass = new THREE.RenderPass( scene, camera );
+
+			var bokehPass = new THREE.BokehPass( scene, camera, {
+				focus: 		1.0,
+				aperture:	0.025,
+				maxblur:	12.0,
+
+				width: width,
+				height: height
+			} );
+
+			bokehPass.renderToScreen = true;
+
+			var composer = new THREE.EffectComposer( renderer );
+
+			composer.addPass( renderPass );
+			composer.addPass( bokehPass );
+
+			postprocessing.composer = composer;
+			postprocessing.bokeh = bokehPass;
+
+			var effectController  = {
+				focus: 		1.0,
+				aperture:	0.025,
+				maxblur:	12.0
+			};
+
+			var matChanger = function( ) {
+				postprocessing.bokeh.uniforms[ "focus" ].value = effectController.focus;
+				postprocessing.bokeh.uniforms[ "aperture" ].value = effectController.aperture;
+				postprocessing.bokeh.uniforms[ "maxblur" ].value = effectController.maxblur;
+			};
+
+			var gui = new dat.GUI();
+			gui.add( effectController, "focus", 0.0, 3.0, 0.025 ).onChange( matChanger );
+			gui.add( effectController, "aperture", 0.001, 0.2, 0.001 ).onChange( matChanger );
+			gui.add( effectController, "maxblur", 0.0, 20.0, 0.025 ).onChange( matChanger );
+			gui.close();
+
+
+		}
+
+		function animate() {
+
+			requestAnimationFrame( animate );
+
+			controls.update();
+
+			renderer.render( scene, camera );
+
+			//obj.rotation.y = Date.now() * 0.0003;
+
+			//postprocessing.composer.render( 0.1 );
+
+			stats.update();
+		}
+
+	</script>
+</body>
+
+</html>
